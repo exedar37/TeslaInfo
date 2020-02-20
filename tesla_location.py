@@ -156,10 +156,10 @@ def main():
 
     # grab vehicle ID
     vehicle_id = select_vehicle(base_uri=base_uri,
-                                    token=token,
-                                    index=0,
-                                    logger=logger,
-                                    )
+                                token=token,
+                                index=0,
+                                logger=logger,
+                                )
 
     # wake up the car
     wake_car(base_uri=base_uri,
