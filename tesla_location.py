@@ -74,8 +74,8 @@ def select_vehicle(base_uri: str, token: str, index: int = 0, logger: logging.Lo
     vehicle_request = requests.get(url=request_url, headers=headers)
     # pull vehicle ID from response
     logger.debug(vehicle_request.json())
-    vehicle_id = int(vehicle_request.json()["response"][index]["id"])
-    return str(vehicle_id)
+    vehicle_id = str(vehicle_request.json()["response"][index]["id"])
+    return vehicle_id
 
 
 def wake_car(base_uri: str, token: str, vehicle_id: str, logger: logging.Logger = None) -> None:
@@ -155,11 +155,11 @@ def main():
         token = "Bearer " + args.token
 
     # grab vehicle ID
-    vehicle_id = str(select_vehicle(base_uri=base_uri,
+    vehicle_id = select_vehicle(base_uri=base_uri,
                                     token=token,
                                     index=0,
                                     logger=logger,
-                                    ))
+                                    )
 
     # wake up the car
     wake_car(base_uri=base_uri,
