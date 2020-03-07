@@ -3,15 +3,79 @@
 import requests
 import argparse
 import logging
+import sqlite3
 import json
+import time
+import os
+
 
 '''
 Purpose: poll for car location on a regular interval and spit out daily reports in json format
+
+environmental variables used: TESLA_PASSWORD, TESLA_EMAIL, TESLA_TOKEN
 '''
 TESLA_CLIENT_ID = "81527cff06843c8634fdc09e8ac0abefb46ac849f38fe1e431c2ef2106796384"
 TESLA_CLIENT_SECRET = "c7257eb71a564034f9419ee651c7d0e5f7aa6bfbd18bafb5c5c033b093bb2fa3"
 TESLA_URL = "https://owner-api.teslamotors.com"
 AUTH_STRING = "/oauth/token?grant_type=password"
+
+
+def store_gps_sqlite(vehicle_info: dict = None, filename: str = "output.json", logger: logging.Logger = None) -> None:
+    """
+    Open sqlite connection.  If file doesn't exist, create new sqlite file, and create new table.  Store GPS information
+    and close connection
+    :param vehicle_info: vehicle info returned from tesla API
+    :param filename: path of sqlite file.  Assume relative
+    :param logger: logging object
+    :return:
+    """
+    create_table_sql = "CREATE TABLE IF NOT EXISTS gps (\
+                        id integer PRIMARY KEY,\
+                        latitude text NOT NULL,\
+                        longitude text NOT NULL,\
+                        heading int NOT NULL,\
+                        gps_time int NOT NULL UNIQUE);"
+    # create sql connection
+    logger.debug(f"storing gps info to {filename}")
+    conn = sqlite3.connect(filename)
+    cursor = conn.cursor()
+    cursor.execute(create_table_sql)
+
+    # store gps info
+    latitude = vehicle_info["response"]["drive_state"]["native_latitude"]
+    longitude = vehicle_info["response"]["drive_state"]["native_longitude"]
+    heading = vehicle_info["response"]["drive_state"]["heading"]
+    gps_time = vehicle_info["response"]["drive_state"]["gps_as_of"]
+    # create gps_store sqlite insert command
+    gps_store = "INSERT INTO gps (latitude, longitude, heading, gps_time) \
+                VALUES(?, ?, ?, ?)"
+    values = (latitude, longitude, heading, gps_time)
+
+    logger.debug(values)
+    logger.debug([type(i) for i in values])
+    try:
+        cursor.execute(gps_store, values)
+    except sqlite3.IntegrityError:
+        logger.info("no change since last update")
+        pass
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+
+def grab_envs(logger: logging.Logger = None):
+    """
+    Grab email/password or token from environmental variables.  If only email/passwd is found,
+    invoke grab_token().  Otherwise just return token (modified with "Bearer " prepended
+    :param logger: logging object
+    :return: return a token
+    """
+    if os.getenv("TESLA_TOKEN"):
+        return "Bearer " + os.getenv("TESLA_TOKEN")
+    elif os.getenv("TESLA_EMAIL") and os.getenv("TESLA_PASSWORD"):
+        return grab_token(os.getenv("TESLA_EMAIL"), os.getenv("TESLA_PASSWORD"))
+    else:
+        logger.error("Missing either TESLA_TOKEN or TESLA_EMAIL and TESLA PASSWORD envs")
 
 
 def initialize_logging(debug_enabled: bool = False) -> logging.Logger:
@@ -66,7 +130,6 @@ def select_vehicle(base_uri: str, token: str, index: int = 0, logger: logging.Lo
     vehicle_uri = "/api/1/vehicles"
     request_url = base_uri + vehicle_uri
     logger.debug(f"sending vehicle list request to {request_url}")
-    headers = {"Authorization": token}
 
     logging.debug(headers)
     logging.debug(request_url)
@@ -110,7 +173,7 @@ def grab_gps(base_uri: str, token: str, vehicle_id: str, logger: logging.Logger 
     """
 
     # set variables
-    headers = {"Authorization":token}
+    headers = {"Authorization": token}
     vehicle_info_url = f"/api/1/vehicles/{vehicle_id}/vehicle_data"
     # vehicle_info_url = f"/api/1/vehicles/{vehicle_id}/data"
     request_url = base_uri + vehicle_info_url
@@ -142,6 +205,7 @@ def main():
     parser.add_argument('-t', '--token', type=str, help="OAuth token",)
     parser.add_argument('-o', '--output_path', default=False,
                         help="Output filename")
+    parser.add_argument('-s', '--store_sqlite', help="store value in sqlite at filename")
     args = parser.parse_args()
 
     # initialize logging
@@ -177,6 +241,8 @@ def main():
     if args.output_path:
         with open(args.output_path, 'w') as outfile:
             outfile.write(json.dumps(vehicle_info))
+    if args.store_sqlite:
+        store_gps_sqlite(vehicle_info=vehicle_info, filename=args.store_sqlite, logger=logger)
 
 
 if __name__ == "__main__":
