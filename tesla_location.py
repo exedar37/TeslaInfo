@@ -18,15 +18,15 @@ TESLA_CLIENT_ID = "81527cff06843c8634fdc09e8ac0abefb46ac849f38fe1e431c2ef2106796
 TESLA_CLIENT_SECRET = "c7257eb71a564034f9419ee651c7d0e5f7aa6bfbd18bafb5c5c033b093bb2fa3"
 TESLA_URL = "https://owner-api.teslamotors.com"
 AUTH_STRING = "/oauth/token?grant_type=password"
+logger = logging.Logger(__name__)
 
 
-def store_gps_sqlite(vehicle_info: dict = None, filename: str = "output.json", logger: logging.Logger = None) -> None:
+def store_gps_sqlite(vehicle_info: dict = None, filename: str = "output.json") -> None:
     """
     Open sqlite connection.  If file doesn't exist, create new sqlite file, and create new table.  Store GPS information
     and close connection
     :param vehicle_info: vehicle info returned from tesla API
     :param filename: path of sqlite file.  Assume relative
-    :param logger: logging object
     :return:
     """
     create_table_sql = "CREATE TABLE IF NOT EXISTS gps (\
@@ -37,6 +37,7 @@ def store_gps_sqlite(vehicle_info: dict = None, filename: str = "output.json", l
                         gps_time int NOT NULL UNIQUE);"
     # create sql connection
     logger.debug(f"storing gps info to {filename}")
+    logger.debug(type(vehicle_info))
     conn = sqlite3.connect(filename)
     cursor = conn.cursor()
     cursor.execute(create_table_sql)
@@ -63,12 +64,10 @@ def store_gps_sqlite(vehicle_info: dict = None, filename: str = "output.json", l
     conn.close()
 
 
-def grab_envs(logger: logging.Logger = None):
+def grab_envs():
     """
     Grab email/password or token from environmental variables.  If only email/passwd is found,
     invoke grab_token().  Otherwise just return token (modified with "Bearer " prepended
-    :param logger: logging object
-    :return: return a token
     """
     if os.getenv("TESLA_TOKEN"):
         return "Bearer " + os.getenv("TESLA_TOKEN")
@@ -78,12 +77,11 @@ def grab_envs(logger: logging.Logger = None):
         logger.error("Missing either TESLA_TOKEN or TESLA_EMAIL and TESLA PASSWORD envs")
 
 
-def initialize_logging(debug_enabled: bool = False) -> logging.Logger:
+def initialize_logging(debug_enabled: bool = False):
     """
     :param debug_enabled: bool to enable debugging log level
     :return:
     """
-    logger = logging.getLogger()
     handler = logging.StreamHandler()
     formatter = logging.Formatter(
         '%(asctime)s %(name)-12s %(levelname)-8s %(message)s')
@@ -94,7 +92,6 @@ def initialize_logging(debug_enabled: bool = False) -> logging.Logger:
     if debug_enabled:
         logger.setLevel(logging.DEBUG)
         logger.debug("debug active")
-    return logger
 
 
 def grab_token(email: str, password: str) -> str:
@@ -117,12 +114,11 @@ def grab_token(email: str, password: str) -> str:
     return "Bearer " + response.json()["access_token"]
 
 
-def select_vehicle(base_uri: str, token: str, index: int = 0, logger: logging.Logger = None) -> str:
+def select_vehicle(base_uri: str, token: str, index: int = 0) -> str:
     """
     :param base_uri: base uri for tesla OAUTH requests
     :param token: OAUTH token
     :param index: index of vehicles if you have more than one.  default 0
-    :param logger: logging object
     :return: vehicle ID
     """
     # set variables
@@ -141,12 +137,11 @@ def select_vehicle(base_uri: str, token: str, index: int = 0, logger: logging.Lo
     return vehicle_id
 
 
-def wake_car(base_uri: str, token: str, vehicle_id: str, logger: logging.Logger = None) -> None:
+def wake_car(base_uri: str, token: str, vehicle_id: str) -> None:
     """
     :param base_uri: base uri for tesla OAUTH requests
     :param token: OAUTH token
     :param vehicle_id: id of the vehicle you're waking
-    :param logger: logging object
     :return:
     """
     headers = {"Authorization": token}
@@ -163,12 +158,14 @@ def wake_car(base_uri: str, token: str, vehicle_id: str, logger: logging.Logger 
         logger.info("Failed to wake up car")
 
 
-def grab_gps(base_uri: str, token: str, vehicle_id: str, logger: logging.Logger = None) -> str:
+def grab_gps(base_uri: str, token: str, vehicle_id: str, output_path: str = False,
+             store_sqlite: str = False) -> dict:
     """
     :param base_uri: base OAUTH url to prepend to request url
     :param token: OAUTH token
     :param vehicle_id: id of the vehicle you're querying.
-    :param logger: logging object
+    :param output_path: optional output path
+    :param store_sqlite: optional output path for sqlite storage
     :return: gps values
     """
 
@@ -182,6 +179,13 @@ def grab_gps(base_uri: str, token: str, vehicle_id: str, logger: logging.Logger 
 
     # send POST for vehicle info
     response = requests.get(url=request_url, headers=headers)
+    # write response to file if output_path set
+    if output_path:
+        with open(output_path, 'w') as outfile:
+            outfile.write(json.dumps(response.json()))
+    # write response to sqlite row if set
+    elif store_sqlite:
+        store_gps_sqlite(vehicle_info=response.json(), filename=store_sqlite)
     logger.debug(response)
     logger.debug(response.json())
     return response.json()
@@ -206,10 +210,13 @@ def main():
     parser.add_argument('-o', '--output_path', default=False,
                         help="Output filename")
     parser.add_argument('-s', '--store_sqlite', help="store value in sqlite at filename")
+    parser.add_argument('-r', '--repeat', help="repeat queries (default 5 minutes delay)",
+                        default=False, action="store_true")
+    parser.add_argument('-d', '--delay', help="Delay between connections when run in repeat mode")
     args = parser.parse_args()
 
     # initialize logging
-    logger = initialize_logging(args.debug_enabled)
+    initialize_logging(args.debug_enabled)
 
     # grab token if we don't already have one
     if not args.token:
@@ -221,28 +228,21 @@ def main():
     # grab vehicle ID
     vehicle_id = select_vehicle(base_uri=base_uri,
                                 token=token,
-                                index=0,
-                                logger=logger,
-                                )
+                                index=0)
 
     # wake up the car
     wake_car(base_uri=base_uri,
              token=token,
-             vehicle_id=vehicle_id,
-             logger=logger
-             )
+             vehicle_id=vehicle_id)
     # grab vehicle info
     vehicle_info = grab_gps(base_uri=base_uri,
                             token=token,
                             vehicle_id=vehicle_id,
-                            logger=logger,
-                            )
-    logger.info(vehicle_info)
-    if args.output_path:
-        with open(args.output_path, 'w') as outfile:
-            outfile.write(json.dumps(vehicle_info))
-    if args.store_sqlite:
-        store_gps_sqlite(vehicle_info=vehicle_info, filename=args.store_sqlite, logger=logger)
+                            output_path=args.output_path,
+                            store_sqlite=args.store_sqlite)
+
+    if not args.output_path:
+        logger.info(vehicle_info)
 
 
 if __name__ == "__main__":
