@@ -21,7 +21,7 @@ AUTH_STRING = "/oauth/token?grant_type=password"
 logger = logging.Logger(__name__)
 
 
-def store_gps_sqlite(vehicle_info: dict = None, filename: str = "output.json") -> None:
+def store_gps_sqlite(vehicle_info: dict = None, filename: str = "output.sqlite") -> None:
     """
     Open sqlite connection.  If file doesn't exist, create new sqlite file, and create new table.  Store GPS information
     and close connection
@@ -219,11 +219,14 @@ def main():
     initialize_logging(args.debug_enabled)
 
     # grab token if we don't already have one
-    if not args.token:
+
+    if args.use_env:
+        token = grab_envs()
+    elif args.token:
+        token = "Bearer " + args.token
+    else:
         token = grab_token(args.email, args.password)
         logger.info(f"Token: {token}")
-    else:
-        token = "Bearer " + args.token
 
     # grab vehicle ID
     vehicle_id = select_vehicle(base_uri=base_uri,
